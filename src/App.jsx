@@ -8,13 +8,33 @@ import { Search, Cpu, HardDrive, Star, Download, ExternalLink, Info, AlertTriang
  */
 
 const PRESETS = [
-  { label: "MacBook Air M-Series (8GB Unified)", vram: 6, quant: 4 },
-  { label: "RTX 3050/4050 Laptop (6GB VRAM)", vram: 6, quant: 4 },
-  { label: "RTX 4060 Laptop/Desktop (8GB VRAM)", vram: 8, quant: 4 },
-  { label: "MacBook Pro M-Series (16GB Unified)", vram: 12, quant: 4 },
-  { label: "RTX 3060/4070 Laptop (12GB VRAM)", vram: 12, quant: 8 },
-  { label: "RTX 3090/4090 Desktop (24GB VRAM)", vram: 24, quant: 8 }
+  { label: "MacBook Air M-Series (8GB Unified)", vram: 6 },
+  { label: "RTX 3050/4050 Laptop (6GB VRAM)", vram: 6 },
+  { label: "RTX 4060 Laptop/Desktop (8GB VRAM)", vram: 8 },
+  { label: "MacBook Pro M-Series (16GB Unified)", vram: 12 },
+  { label: "RTX 3060/4070 Laptop (12GB VRAM)", vram: 12 },
+  { label: "RTX 3090/4090 Desktop (24GB VRAM)", vram: 24 }
 ];
+
+// Typical GGUF bit mappings
+const QUANT_BITS = {
+  'FP16': 16,
+  'Q8_0': 8,
+  'Q8_1': 8,
+  'Q6_K': 6.5,
+  'Q5_K_M': 5.5,
+  'Q5_K_S': 5.5,
+  'Q5_0': 5,
+  'Q5_1': 5,
+  'Q4_K_M': 4.5,
+  'Q4_K_S': 4.5,
+  'Q4_0': 4,
+  'Q4_1': 4,
+  'Q3_K_L': 3.5,
+  'Q3_K_M': 3.5,
+  'Q3_K_S': 3.5,
+  'Q2_K': 2.5
+};
 
 const App = () => {
   const [models, setModels] = useState([]);
@@ -22,13 +42,13 @@ const App = () => {
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [vramBudget, setVramBudget] = useState(6); // Default 6GB
-  const [quantization, setQuantization] = useState(4); // Default 4-bit
   const [viewMode, setViewMode] = useState('grid');
   const [theme, setTheme] = useState(
     localStorage.getItem('theme') || 
     (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
   );
   const [selectedPreset, setSelectedPreset] = useState('');
+  const [formatFilter, setFormatFilter] = useState('gguf');
 
   // Handle Theme
   useEffect(() => {
@@ -50,7 +70,6 @@ const App = () => {
     if (val !== '') {
       const preset = PRESETS[parseInt(val)];
       setVramBudget(preset.vram);
-      setQuantization(preset.quant);
     }
   };
 
@@ -63,10 +82,10 @@ const App = () => {
       setLoading(true);
       try {
         const params = new URLSearchParams({
-          filter: 'text-generation',
+          filter: 'gguf',
           sort: 'downloads',
           direction: '-1',
-          limit: '150',
+          limit: '250',
           full: 'true',
           config: 'true'
         });
@@ -95,7 +114,24 @@ const App = () => {
             paramsCount = 0.5; 
           }
 
-          const hasGGUF = (m.tags || []).some(t => t.toLowerCase().includes('gguf')) || m.id.toLowerCase().includes('gguf');
+          const hasGGUF = true; // Guaranteed by the modified fetch filter
+          const hasSafetensors = (m.tags || []).some(t => t.toLowerCase().includes('safetensors')) || (m.siblings || []).some(s => s.rfilename && s.rfilename.endsWith('.safetensors'));
+
+          // Extract unique GGUF files and their probable bits
+          const availableQuants = [];
+          (m.siblings || []).forEach(s => {
+            if (s.rfilename && s.rfilename.endsWith('.gguf')) {
+              for (const [qName, bits] of Object.entries(QUANT_BITS)) {
+                if (s.rfilename.includes(qName)) {
+                  availableQuants.push({ name: qName, bits: bits, filename: s.rfilename });
+                  break; // Only push the most specific match
+                }
+              }
+            }
+          });
+
+          // Sort quantizations from highest quality (most bits) to lowest
+          availableQuants.sort((a, b) => b.bits - a.bits);
 
           return {
             id: m.id,
@@ -105,12 +141,15 @@ const App = () => {
             likes: m.likes,
             params: paramsCount,
             tags: m.tags || [],
-            hasGGUF: hasGGUF,
+            hasGGUF,
+            hasSafetensors,
+            availableQuants,
             lastModified: new Date(m.lastModified).toLocaleDateString()
           };
         });
 
-        setModels(processed);
+        // Filter out repos that don't successfully parse parameters or have ZERO recognized gguf siblings
+        setModels(processed.filter(m => m.params > 0));
       } catch (err) {
         setError(err.message);
       } finally {
@@ -121,20 +160,41 @@ const App = () => {
     fetchModels();
   }, []);
 
-  const calculateVram = (params, bits) => {
-    if (!params) return 0;
-    const baseSize = (params * bits) / 8;
-    return (baseSize * 1.2).toFixed(2);
+  // Helper to find the best fit given a model and vram budget
+  const getBestFit = (model, budget) => {
+    // If not GGUF or searching for safetensors, just fallback to an 8-bit estimate
+    if (formatFilter === 'safetensors' || (!model.hasGGUF && formatFilter === 'any')) {
+      const vramRequired = calculateVram(model.params, 8);
+      return vramRequired <= budget ? { name: 'Safetensors (Est. 8-bit)', bits: 8, vram: vramRequired } : null;
+    }
+
+    // Default to a 4-bit estimate if no specific siblings found
+    if (model.availableQuants.length === 0) {
+      const vramRequired = calculateVram(model.params, 4);
+      return vramRequired <= budget ? { name: 'Unknown Q4 (Est)', bits: 4, vram: vramRequired } : null;
+    }
+    
+    // Find the highest quality quantization that fits
+    for (const quant of model.availableQuants) {
+      const vramRequired = calculateVram(model.params, quant.bits);
+      if (vramRequired <= budget) {
+        return { ...quant, vram: vramRequired };
+      }
+    }
+    return null; // None fit
   };
 
   const filteredModels = useMemo(() => {
-    return models.filter(model => {
-      const vramRequired = calculateVram(model.params, quantization);
-      const matchesVram = vramRequired <= vramBudget;
-      const matchesSearch = model.id.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesVram && matchesSearch;
-    });
-  }, [models, vramBudget, quantization, searchQuery]);
+    return models
+      .map(model => ({ ...model, bestFit: getBestFit(model, vramBudget) }))
+      .filter(model => {
+        const matchesSearch = model.id.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesFormat = formatFilter === 'any' ? true :
+                              formatFilter === 'gguf' ? model.hasGGUF :
+                              formatFilter === 'safetensors' ? model.hasSafetensors : true;
+        return model.bestFit !== null && matchesSearch && matchesFormat;
+      });
+  }, [models, vramBudget, searchQuery, formatFilter]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200">
@@ -196,6 +256,20 @@ const App = () => {
               
               <div className="space-y-6">
                 <div>
+                  <label className="text-sm font-medium block mb-2 dark:text-slate-200">Model Format</label>
+                  <div className="relative mb-5">
+                    <HardDrive className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <select 
+                      value={formatFilter}
+                      onChange={(e) => setFormatFilter(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:border-indigo-500 dark:focus:border-indigo-500 dark:text-slate-200 appearance-none"
+                    >
+                      <option value="any">Any Format</option>
+                      <option value="gguf">GGUF (Ollama / Local)</option>
+                      <option value="safetensors">Safetensors (PyTorch)</option>
+                    </select>
+                  </div>
+
                   <label className="text-sm font-medium block mb-2 dark:text-slate-200">Hardware Presets</label>
                   <div className="relative">
                     <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -234,31 +308,6 @@ const App = () => {
                     <span>Mid-Range</span>
                     <span>Enthusiast</span>
                   </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium block mb-2 dark:text-slate-200">Quantization (Precision)</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[4, 8, 16].map((bit) => (
-                      <button
-                        key={bit}
-                        onClick={() => {
-                          setQuantization(bit);
-                          setSelectedPreset('');
-                        }}
-                        className={`py-2 text-xs rounded-lg border transition-all ${
-                          quantization === bit 
-                          ? 'bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-200 dark:shadow-none' 
-                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-300 dark:hover:border-indigo-500/50'
-                        }`}
-                      >
-                        {bit}-bit
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 italic">
-                    Lower bits use less VRAM but lose slight intelligence.
-                  </p>
                 </div>
               </div>
             </div>
@@ -316,8 +365,7 @@ const App = () => {
           ) : (
             <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 gap-5" : "space-y-4"}>
               {filteredModels.map((model) => {
-                const required = calculateVram(model.params, quantization);
-                const pctOfBudget = (required / vramBudget) * 100;
+                const pctOfBudget = (model.bestFit.vram / vramBudget) * 100;
                 
                 return (
                   <div 
@@ -347,20 +395,34 @@ const App = () => {
                         <h3 className="font-bold text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate pr-4" title={model.id}>
                           {model.name}
                         </h3>
-                        {model.hasGGUF && (
-                          <span className="shrink-0 flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-800/50">
-                            GGUF
-                          </span>
-                        )}
+                        <div className="flex gap-1">
+                          {model.hasGGUF && (
+                            <span className="shrink-0 flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-800/50">
+                              GGUF
+                            </span>
+                          )}
+                          {model.hasSafetensors && formatFilter !== 'gguf' && (
+                            <span className="shrink-0 flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded-md border border-blue-200 dark:border-blue-800/50">
+                              Safetensors
+                            </span>
+                          )}
+                        </div>
                       </div>
                       
                       <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">{model.author}</p>
                       
                       <div className="space-y-3">
                         <div className="flex justify-between text-xs">
+                          <span className="text-slate-500 dark:text-slate-400 font-medium">Best Fit</span>
+                          <span className="font-bold text-slate-700 dark:text-slate-300">
+                            {model.bestFit.name}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between text-xs">
                           <span className="text-slate-500 dark:text-slate-400 font-medium">Memory Buffer</span>
                           <span className={`font-bold ${pctOfBudget > 90 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                            ~{required} GB
+                            ~{model.bestFit.vram} GB
                           </span>
                         </div>
                         
@@ -382,12 +444,16 @@ const App = () => {
 
                     <div className={`px-5 py-3 bg-slate-50/80 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-700/50 flex items-center justify-between ${viewMode === 'list' ? 'sm:border-t-0 sm:border-l sm:h-full sm:flex-col sm:justify-center sm:px-6' : ''}`}>
                        <a 
-                        href={`https://huggingface.co/${model.id}${model.hasGGUF ? '/tree/main' : ''}`} 
+                        href={`https://huggingface.co/${model.id}${
+                          model.bestFit.filename ? `/blob/main/${model.bestFit.filename}` : 
+                          formatFilter === 'gguf' || model.hasGGUF ? '/tree/main' : 
+                          formatFilter === 'safetensors' ? '/tree/main' : ''
+                        }`} 
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 hover:underline hover:text-indigo-700 dark:hover:text-indigo-300"
                        >
-                         {model.hasGGUF ? 'Get GGUF Files' : 'View Card'} <ExternalLink size={12} />
+                         {model.bestFit.filename ? `Download ${model.bestFit.name}` : (formatFilter === 'gguf' && model.hasGGUF) || (formatFilter === 'any' && model.hasGGUF) ? 'Get GGUF Files' : formatFilter === 'safetensors' && model.hasSafetensors ? 'Get Safetensors' : 'View Card'} <ExternalLink size={12} />
                        </a>
                        <div className={`text-[10px] text-slate-400 dark:text-slate-500 ${viewMode === 'list' ? 'sm:mt-2' : ''}`}>
                          Updated: {model.lastModified}
