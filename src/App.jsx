@@ -160,6 +160,12 @@ const App = () => {
     fetchModels();
   }, []);
 
+  const calculateVram = (params, bits) => {
+    if (!params) return 0;
+    const baseSize = (params * bits) / 8;
+    return (baseSize * 1.2).toFixed(2);
+  };
+
   // Helper to find the best fit given a model and vram budget
   const getBestFit = (model, budget) => {
     // If not GGUF or searching for safetensors, just fallback to an 8-bit estimate
