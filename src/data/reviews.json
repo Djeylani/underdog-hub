@@ -1,7 +1,7 @@
 [
   {
-    "model_id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-    "model_name_alias": "Qwen 2.5 (7B/9B)",
+    "model_id": "Qwen3.5-9B",
+    "model_name_alias": "Qwen 3.5 (9B)",
     "quantization": "Q3_K_S",
     "evaluated": "2026-03",
     "core_finding": "Qwen is a Chinese-first model that has learned English to a high level — not an English model that learned Chinese. This single fact explains the entire performance profile: native-level Chinese literary writing, strong JavaScript/Python async patterns, but weak Rust and Python vectorization (Pandas/NumPy) due to differing regional documentation footprints.",
