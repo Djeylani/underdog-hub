@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Cpu, HardDrive, Star, Download, ExternalLink, Info, AlertTriangle, ChevronRight, LayoutGrid, List, Moon, Sun, Monitor } from 'lucide-react';
+import { Search, Cpu, HardDrive, Star, Download, ExternalLink, Info, AlertTriangle, ChevronRight, LayoutGrid, List, Moon, Sun, Monitor, X, CheckCircle2 } from 'lucide-react';
+import reviewsData from './data/reviews.json';
 
 /**
  * UNDERDOG HUB
@@ -49,6 +50,7 @@ const App = () => {
   );
   const [selectedPreset, setSelectedPreset] = useState('');
   const [formatFilter, setFormatFilter] = useState('gguf');
+  const [selectedReview, setSelectedReview] = useState(null);
 
   // Handle Theme
   useEffect(() => {
@@ -372,6 +374,7 @@ const App = () => {
             <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 gap-5" : "space-y-4"}>
               {filteredModels.map((model) => {
                 const pctOfBudget = (model.bestFit.vram / vramBudget) * 100;
+                const review = reviewsData.find(r => model.id.toLowerCase().includes(r.model_id.split('/').pop().toLowerCase()));
                 
                 return (
                   <div 
@@ -398,10 +401,20 @@ const App = () => {
 
                     <div className={`p-5 flex-1 ${viewMode === 'list' ? 'sm:py-4 px-5' : ''}`}>
                       <div className="flex justify-between items-start mb-1">
-                        <h3 className="font-bold text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate pr-4" title={model.id}>
-                          {model.name}
-                        </h3>
-                        <div className="flex gap-1">
+                        <div className="flex flex-col gap-1.5 pr-4 truncate w-full">
+                          <h3 className="font-bold text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate w-full" title={model.id}>
+                            {model.name}
+                          </h3>
+                          {review && (
+                            <button 
+                              onClick={() => setSelectedReview(review)}
+                              className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 px-2 py-0.5 rounded-md border border-purple-200 dark:border-purple-800/50 w-fit hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                            >
+                              <CheckCircle2 size={12} /> Verified by Underdog
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex gap-1 shrink-0 mt-1">
                           {model.hasGGUF && (
                             <span className="shrink-0 flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-800/50">
                               GGUF
@@ -528,6 +541,105 @@ const App = () => {
           </div>
         </div>
       </footer>
+
+      {/* Slide-out Review Drawer */}
+      <div 
+        className={`fixed inset-0 bg-slate-900/20 dark:bg-slate-900/60 backdrop-blur-sm z-50 transition-opacity duration-300 ${selectedReview ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        onClick={() => setSelectedReview(null)}
+      >
+        <div 
+          className={`absolute top-0 right-0 h-full w-full max-w-md bg-white dark:bg-slate-900 shadow-2xl transition-transform duration-300 ease-out flex flex-col ${selectedReview ? 'translate-x-0' : 'translate-x-full'}`}
+          onClick={e => e.stopPropagation()}
+        >
+          {selectedReview && (
+            <>
+              <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-start bg-slate-50 dark:bg-slate-900/50">
+                <div>
+                  <div className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400 font-bold text-xs mb-1.5 uppercase tracking-wider">
+                    <CheckCircle2 size={14} /> Underdog Review
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white leading-tight">{selectedReview.model_name_alias}</h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{selectedReview.model_id}</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedReview(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:text-slate-300 dark:hover:bg-slate-800 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 mb-2 uppercase tracking-widest">The Verdict</h3>
+                  <p className="text-sm text-purple-900 dark:text-purple-100 leading-relaxed font-medium bg-purple-50 dark:bg-purple-900/30 p-4 rounded-xl border border-purple-100 dark:border-purple-800/50">
+                    {selectedReview.verdict}
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-widest">Core Finding</h3>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed italic border-l-2 border-slate-300 dark:border-slate-600 pl-4">
+                    {selectedReview.core_finding}
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 mb-4 uppercase tracking-widest">Capability Map</h3>
+                  <div className="space-y-4">
+                    <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/30 rounded-xl p-4">
+                      <h4 className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div> Strong
+                      </h4>
+                      <ul className="text-sm text-slate-700 dark:text-slate-300 space-y-1.5 ml-4 list-disc marker:text-emerald-300">
+                        {selectedReview.capability_map.strong.map((item, i) => <li key={i}>{item}</li>)}
+                      </ul>
+                    </div>
+                    
+                    <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-xl p-4">
+                      <h4 className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-amber-500"></div> Adequate
+                      </h4>
+                      <ul className="text-sm text-slate-700 dark:text-slate-300 space-y-1.5 ml-4 list-disc marker:text-amber-300">
+                        {selectedReview.capability_map.adequate.map((item, i) => <li key={i}>{item}</li>)}
+                      </ul>
+                    </div>
+
+                    <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 rounded-xl p-4">
+                      <h4 className="text-xs font-bold text-red-700 dark:text-red-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-red-500"></div> Weak
+                      </h4>
+                      <ul className="text-sm text-slate-700 dark:text-slate-300 space-y-1.5 ml-4 list-disc marker:text-red-300">
+                        {selectedReview.capability_map.weak.map((item, i) => <li key={i}>{item}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 mb-4 uppercase tracking-widest">Domain Scores</h3>
+                  <div className="space-y-4">
+                    {Object.entries(selectedReview.scores).map(([domain, score]) => (
+                      <div key={domain}>
+                        <div className="flex justify-between text-xs mb-1.5 font-medium text-slate-700 dark:text-slate-300">
+                          <span className="capitalize">{domain}</span>
+                          <span>{score}/10</span>
+                        </div>
+                        <div className="w-full h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-indigo-500 dark:bg-indigo-400 rounded-full"
+                            style={{ width: `${(score / 10) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
